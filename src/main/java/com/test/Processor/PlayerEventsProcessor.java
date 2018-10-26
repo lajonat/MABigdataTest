@@ -19,6 +19,7 @@ import java.util.Map;
  *      - Multithreading support (specifically SimpleDateFormat is not threadsafe)
  *      - Handle delayed messages differently? (if we do not want to save late arrivals)
  *      - Better handling of errors against hbase - not an infinite loop? Differentiate between recoverable and unrecoverable errors
+ *      - Better definition of daily events - if 2 events happen at the same exact timestamp for the same users, they will override each other
  */
 public class PlayerEventsProcessor implements IProcessor {
     private ISink target;
@@ -47,13 +48,14 @@ public class PlayerEventsProcessor implements IProcessor {
         // TODO: Handle delayed messages? Should we write messages that are more than 1 day late?
 
         Map<String, String> outputData = getOutput(message);
+        Map<String, String> dailyOutputData = getDailyOutput(message);
 
         // If an exception happens while writing to hbase, assume it is temporary, and wait for it to be resolved.
         // Do not continue to next record until then, so that we won't lose records (by reading them and not writing)
         while (true) {
             try {
                 target.write("user_events", message.getUser_id() + " " + message.getTime(), outputData);
-                target.write("daily_events_" + dateFormatter.format(new Date()), message.getUser_id(), outputData);
+                target.write("daily_events_" + dateFormatter.format(new Date()), message.getUser_id(), dailyOutputData);
                 break;
             } catch (IOException e) {
                 // LOG AND ALERT HERE
@@ -62,6 +64,15 @@ public class PlayerEventsProcessor implements IProcessor {
                 Thread.sleep(5000);
             }
         }
+    }
+
+    private Map<String, String> getDailyOutput(PlayerEventMessage message) {
+        Map<String, String> output = new HashMap<>();
+        // TODO: Better definition of daily events
+        String value = String.format("{\"event\":\"%s\",\"ip\":\"%s\",\"params\":\"%s\"}",
+                message.getEvent(), message.getIp(), message.getParams());
+        output.put("data:" + message.getTime(), value);
+        return output;
     }
 
     private Map<String, String> getOutput(PlayerEventMessage message) {
